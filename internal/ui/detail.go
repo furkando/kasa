@@ -381,6 +381,9 @@ func (m Model) detailStats(row portfolio.Row, isFX bool, w int) string {
 		} else if row.Unit == "₺" {
 			stats = append(stats, kv{"bakiye", amountCell(row.Amount, row.Unit)})
 		}
+		if s := m.entryCell(row); s != "" {
+			stats = append(stats, kv{"giriş fiyatı", s})
+		}
 		if m.sum.TotalTRY > 0 {
 			stats = append(stats, kv{"portföy payı", pctPlain(row.ValueTRY / m.sum.TotalTRY * 100)})
 		}
@@ -447,25 +450,11 @@ func (m Model) detailStats(row portfolio.Row, isFX bool, w int) string {
 					}
 				}
 			}
-		case m.detailKey != "gold" && row.Unit == "ad":
-			for _, st := range m.cfg.Assets.Stocks {
-				if st.Symbol != m.detailKey || st.Cost == 0 {
-					continue
-				}
-				cur := "₺"
-				if row.Ccy == "USD" {
-					cur = "$"
-				}
-				stats = append(stats, kv{"ort. maliyet", cur + tr(st.Cost, 2) + "/ad"})
-			}
 		case strings.HasPrefix(m.detailKey, "crypto:"):
 			name := strings.TrimPrefix(m.detailKey, "crypto:")
 			for _, cr := range m.cfg.Assets.Cryptos {
 				if cr.Name != name {
 					continue
-				}
-				if cr.CostUSD > 0 {
-					stats = append(stats, kv{"ort. maliyet", "$" + tr(cr.CostUSD, 2)})
 				}
 				if cr.Note != "" {
 					stats = append(stats, kv{"not", cr.Note})
@@ -482,9 +471,6 @@ func (m Model) detailStats(row portfolio.Row, isFX bool, w int) string {
 					unit = "$"
 				}
 				stats = append(stats, kv{"değer", unit + tr(pr.Value, 0)})
-				if pr.Cost > 0 {
-					stats = append(stats, kv{"alış", unit + tr(pr.Cost, 0)})
-				}
 			}
 		case strings.HasPrefix(m.detailKey, "cash:"):
 			name := strings.TrimPrefix(m.detailKey, "cash:")
@@ -523,6 +509,57 @@ func (m Model) detailStats(row portfolio.Row, isFX bool, w int) string {
 		b.WriteString(line + "\n")
 	}
 	return b.String()
+}
+
+// entryCell is the asset's entry price on the detail page. Empty where the
+// idea doesn't apply: deposits and loans show principal/amount, TL cash is 1:1.
+func (m Model) entryCell(row portfolio.Row) string {
+	const missing = "— (e ile girilir)"
+	symbol := func(ccy string) string {
+		if ccy == "USD" {
+			return "$"
+		}
+		return "₺"
+	}
+	switch {
+	case row.Key == "gold":
+		if g := m.cfg.Assets.Gold; g != nil && g.CostTRY > 0 && g.Grams > 0 {
+			return lira(g.CostTRY/g.Grams, 2) + "/gr"
+		}
+		return missing
+	case strings.HasPrefix(row.Key, "crypto:"):
+		for _, cr := range m.cfg.Assets.Cryptos {
+			if "crypto:"+cr.Name == row.Key && cr.CostUSD > 0 {
+				return dollar(cr.CostUSD, 2)
+			}
+		}
+		return missing
+	case strings.HasPrefix(row.Key, "prop:"):
+		for _, pr := range m.cfg.Assets.Properties {
+			if "prop:"+pr.Name == row.Key && pr.Cost > 0 {
+				return symbol(pr.Currency) + tr(pr.Cost, 0)
+			}
+		}
+		return missing
+	case strings.HasPrefix(row.Key, "cash:"):
+		if row.Unit == "₺" {
+			return ""
+		}
+		for _, c := range m.cfg.Assets.Cash {
+			if "cash:"+c.Name == row.Key && c.CostTRY > 0 && c.Amount > 0 {
+				return lira(c.CostTRY/c.Amount, 2) + "/$"
+			}
+		}
+		return missing
+	case row.Unit == "ad":
+		for _, st := range m.cfg.Assets.Stocks {
+			if st.Symbol == row.Key && st.Cost > 0 {
+				return symbol(row.Ccy) + tr(st.Cost, 2) + "/ad"
+			}
+		}
+		return missing
+	}
+	return ""
 }
 
 func relTime(t time.Time) string {

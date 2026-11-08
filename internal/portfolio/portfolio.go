@@ -27,7 +27,7 @@ type Row struct {
 	DayTRY   float64 // TRY day change including FX effect
 	TotalPL  float64 // TRY, NaN when no cost basis
 	TotalPct float64 // NaN when no cost basis
-	Category string  // nakit | kripto | hisse | altın | vadeli | gayrimenkul | alacak/borç | …
+	Category string  // nakit | kripto | hisse | altın | vadeli | gayrimenkul | alacak | borç | …
 	Hidden   bool    // excluded from every total
 	Spark    []float64
 }
@@ -143,11 +143,15 @@ func Compute(cfg *config.Config, quotes map[string]prices.Quote, now time.Time) 
 		} else {
 			val, prev, price = l.Amount*sign, l.Amount*sign, 1
 		}
+		cat := "alacak"
+		if l.Kind == "borc" {
+			cat = "borç"
+		}
 		add(Row{
 			Key: "loan:" + l.Name, Label: l.Name, Amount: l.Amount, Unit: unit,
 			Price: price, Ccy: "TRY", ValueTRY: val,
 			DayPct: dayPct, DayTRY: val - prev,
-			TotalPL: nan, TotalPct: nan, Category: "alacak/borç",
+			TotalPL: nan, TotalPct: nan, Category: cat,
 		}, 0)
 	}
 

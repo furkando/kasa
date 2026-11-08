@@ -13,8 +13,28 @@ type Config struct {
 	// Display base currency; TRY is the primary, USD shown as secondary.
 	RefreshSeconds int      `yaml:"refresh_seconds"`
 	Assets         Assets   `yaml:"assets"`
-	Hidden         []string `yaml:"hidden,omitempty"` // row keys excluded from totals
+	Hidden         []string `yaml:"hidden,omitempty"`    // row keys excluded from totals
+	Collapsed      []string `yaml:"collapsed,omitempty"` // categories folded in the grouped view
 	AI             AI       `yaml:"ai,omitempty"`
+}
+
+func (c *Config) IsCollapsed(category string) bool {
+	for _, k := range c.Collapsed {
+		if k == category {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) ToggleCollapsed(category string) {
+	for i, k := range c.Collapsed {
+		if k == category {
+			c.Collapsed = append(c.Collapsed[:i], c.Collapsed[i+1:]...)
+			return
+		}
+	}
+	c.Collapsed = append(c.Collapsed, category)
 }
 
 func (c *Config) IsHidden(rowKey string) bool {

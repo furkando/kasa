@@ -341,10 +341,15 @@ func (m Model) viewTable(w int) string {
 	b.WriteString("  " + sFaint.Render(strings.Repeat("─", tableW)))
 	b.WriteString("\n")
 
-	type gsum struct{ val, day float64 }
+	type gsum struct {
+		val, day float64
+		n        int
+	}
 	groups := map[string]*gsum{}
+	hiddenN := 0
 	for _, r := range m.sum.Rows {
 		if r.Hidden {
+			hiddenN++
 			continue
 		}
 		g := groups[r.Category]
@@ -352,6 +357,7 @@ func (m Model) viewTable(w int) string {
 			g = &gsum{}
 			groups[r.Category] = g
 		}
+		g.n++
 		g.val += m.rowVal(r.ValueTRY)
 		if m.baseUSD {
 			g.day += m.sum.RowDayUSD(r)
@@ -364,7 +370,17 @@ func (m Model) viewTable(w int) string {
 	for ri, r := range m.sum.Rows {
 		if r.Hidden && !hiddenHeader {
 			hiddenHeader = true
-			b.WriteString("\n  " + sFaint.Render(fit("✕ GİZLİ — toplama dahil değil", tableW, false)) + "\n")
+			title := "▾ GİZLİ — toplama dahil değil"
+			if m.isCollapsed(r) {
+				title = fmt.Sprintf("▹ GİZLİ — toplama dahil değil · %d kalem", hiddenN)
+			}
+			b.WriteString("\n")
+			if m.selCollapsed(hiddenGroup) {
+				b.WriteString(sKey.Render("▸ "))
+			} else {
+				b.WriteString("  ")
+			}
+			b.WriteString(sFaint.Render(fit(title, tableW, false)) + "\n")
 		}
 		if m.grouped && !r.Hidden && r.Category != prevCat {
 			prevCat = r.Category
@@ -373,19 +389,30 @@ func (m Model) viewTable(w int) string {
 			if m.sum.TotalTRY != 0 {
 				pay = g.val / m.rowVal(m.sum.TotalTRY) * 100
 			}
+			arrow := "▾ "
+			if m.isCollapsed(r) {
+				arrow = "▹ "
+			}
 			gcells := map[string]struct {
 				text  string
 				style lipgloss.Style
 			}{
-				"VARLIK": {"▾ " + strings.ToUpperSpecial(unicode.TurkishCase, r.Category), sHeader},
+				"VARLIK": {arrow + strings.ToUpperSpecial(unicode.TurkishCase, r.Category), sHeader},
 				"GÜN ₺":  {m.signedMoney(g.day), paint(g.day)},
 				"DEĞER":  {m.money(g.val), sDim},
 				"PAY":    {pctPlain(pay), sDim},
 			}
+			if m.isCollapsed(r) {
+				gcells["MİKTAR"] = cellOf(fmt.Sprintf("%d kalem", g.n), sFaint)
+			}
 			if ri > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString("  ")
+			if m.selCollapsed(r.Category) {
+				b.WriteString(sKey.Render("▸ "))
+			} else {
+				b.WriteString("  ")
+			}
 			for i, c := range vc {
 				if i > 0 {
 					b.WriteString("  ")
@@ -398,6 +425,9 @@ func (m Model) viewTable(w int) string {
 				b.WriteString(cell.style.Render(fit(cell.text, c.w, c.right)))
 			}
 			b.WriteString("\n")
+		}
+		if m.isCollapsed(r) {
+			continue
 		}
 		if ri == m.sel {
 			b.WriteString(sKey.Render("▸ "))
@@ -423,7 +453,7 @@ func (m Model) viewTable(w int) string {
 			text  string
 			style lipgloss.Style
 		}{
-			"VARLIK": {r.Label, lipgloss.NewStyle()},
+			"VARLIK": {truncateMiddle(r.Label, vc[0].w), lipgloss.NewStyle()},
 			"MİKTAR": {amountCell(r.Amount, r.Unit), sDim},
 			"FİYAT":  {priceCell(r.Price, r.Ccy, r.Unit), sDim},
 			"GÜN":    {signedPct(r.DayPct), paint(r.DayPct)},
@@ -521,6 +551,7 @@ func (m Model) viewFooter(w int) string {
 		sKey.Render("u") + sFaint.Render(" kur · ") +
 		sKey.Render("h") + sFaint.Render(" gizle · ") +
 		sKey.Render("g") + sFaint.Render(" grup · ") +
+		sKey.Render("c") + sFaint.Render(" katla · ") +
 		sKey.Render("s") + sFaint.Render(" sıra["+sortNames[m.sortMode]+"] · ") +
 		sKey.Render("o") + sFaint.Render(" ayarlar · ") +
 		sKey.Render("q") + sFaint.Render(" çık")
@@ -612,6 +643,21 @@ func truncate(s string, w int) string {
 		return s
 	}
 	return string(r[:w-1]) + "…"
+}
+
+// truncateMiddle keeps both ends of s, so names differing only at the end
+// ("Daire (merkez - kuzey)" / "Daire (merkez - güney)") stay distinguishable.
+func truncateMiddle(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	if w <= 2 {
+		return truncate(s, w)
+	}
+	head := (w - 1) / 2
+	tail := w - 1 - head
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
 }
 
 func joinEdges(left, right string, w int) string {

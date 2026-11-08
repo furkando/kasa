@@ -230,9 +230,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.grouped = !m.grouped
 			m.sortRows()
 			return m, nil
+		case "c":
+			return m.toggleSelGroup()
+		case "C":
+			return m.toggleAllGroups()
 		case "h":
-			if m.sel >= 0 && m.sel < len(m.sum.Rows) {
-				key := m.sum.Rows[m.sel].Key
+			if r, ok := m.selRow(); ok {
+				key := r.Key
 				m.cfg.ToggleHidden(key)
 				if err := config.Save(m.cfg, config.DefaultPath()); err != nil {
 					m.err = err
@@ -250,28 +254,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adding = true
 			return m, nil
 		case "x", "backspace":
-			if m.sel >= 0 && m.sel < len(m.sum.Rows) {
-				m.confirmDel = m.sum.Rows[m.sel].Key
+			if r, ok := m.selRow(); ok {
+				m.confirmDel = r.Key
 			}
 			return m, nil
 		case "up", "k":
-			if m.sel > 0 {
-				m.sel--
-			}
+			m.moveSel(-1)
 			return m, nil
 		case "down", "j":
-			if m.sel < len(m.sum.Rows)-1 {
-				m.sel++
-			}
+			m.moveSel(1)
 			return m, nil
 		case "enter":
-			if m.sel >= 0 && m.sel < len(m.sum.Rows) {
-				return m.openDetail(m.sum.Rows[m.sel].Key)
+			if r, ok := m.selRow(); ok {
+				return m.openDetail(r.Key)
 			}
-			return m, nil
+			return m.toggleSelGroup() // cursor is on a collapsed group
 		case "e":
-			if m.sel >= 0 && m.sel < len(m.sum.Rows) {
-				if f := m.formFor(m.sum.Rows[m.sel].Key); f != nil {
+			if r, ok := m.selRow(); ok {
+				if f := m.formFor(r.Key); f != nil {
 					m.form = f
 					m.mode = modeForm
 				}
@@ -427,6 +427,95 @@ func (m *Model) afterConfigChange() {
 	if m.aiChat != nil && !m.aiBusy {
 		m.aiChat.SetSystem(ai.SystemPrompt(m.cfg, m.st, m.quotes, m.hist, time.Now()))
 	}
+}
+
+// hiddenGroup is the Collapsed entry for the GİZLİ section.
+const hiddenGroup = "(gizli)"
+
+// groupOf is the group r folds with; hidden rows form their own section.
+func groupOf(r portfolio.Row) string {
+	if r.Hidden {
+		return hiddenGroup
+	}
+	return r.Category
+}
+
+// isCollapsed reports whether r is folded away inside a collapsed group.
+// The GİZLİ section exists in the flat view too, so it folds there as well.
+func (m Model) isCollapsed(r portfolio.Row) bool {
+	return (m.grouped || r.Hidden) && m.cfg.IsCollapsed(groupOf(r))
+}
+
+// selCollapsed reports whether the cursor sits on the collapsed group.
+func (m Model) selCollapsed(group string) bool {
+	if m.sel < 0 || m.sel >= len(m.sum.Rows) {
+		return false
+	}
+	r := m.sum.Rows[m.sel]
+	return m.isCollapsed(r) && groupOf(r) == group
+}
+
+// selRow is the row that row actions apply to. False when nothing is selected
+// or the cursor is on a collapsed group, whose rows are not on screen.
+func (m Model) selRow() (portfolio.Row, bool) {
+	if m.sel < 0 || m.sel >= len(m.sum.Rows) || m.isCollapsed(m.sum.Rows[m.sel]) {
+		return portfolio.Row{}, false
+	}
+	return m.sum.Rows[m.sel], true
+}
+
+// moveSel steps one line on screen: a collapsed group counts as a single line.
+func (m *Model) moveSel(delta int) {
+	if m.sel < 0 || m.sel >= len(m.sum.Rows) {
+		return
+	}
+	cur := m.sum.Rows[m.sel]
+	for i := m.sel + delta; i >= 0 && i < len(m.sum.Rows); i += delta {
+		if r := m.sum.Rows[i]; groupOf(r) == groupOf(cur) && m.isCollapsed(r) && m.isCollapsed(cur) {
+			continue
+		}
+		m.sel = i
+		return
+	}
+}
+
+func (m Model) toggleSelGroup() (tea.Model, tea.Cmd) {
+	if m.sel < 0 || m.sel >= len(m.sum.Rows) || (!m.grouped && !m.sum.Rows[m.sel].Hidden) {
+		return m, nil
+	}
+	group := groupOf(m.sum.Rows[m.sel])
+	m.cfg.ToggleCollapsed(group)
+	for i, r := range m.sum.Rows {
+		if groupOf(r) == group {
+			m.sel = i // land on the group's first line
+			break
+		}
+	}
+	return m.saveCollapsed()
+}
+
+// toggleAllGroups expands everything if any group is collapsed, else collapses all.
+func (m Model) toggleAllGroups() (tea.Model, tea.Cmd) {
+	if !m.grouped {
+		return m, nil
+	}
+	if len(m.cfg.Collapsed) > 0 {
+		m.cfg.Collapsed = nil
+		return m.saveCollapsed()
+	}
+	for _, r := range m.sum.Rows {
+		if !m.cfg.IsCollapsed(groupOf(r)) {
+			m.cfg.ToggleCollapsed(groupOf(r))
+		}
+	}
+	return m.saveCollapsed()
+}
+
+func (m Model) saveCollapsed() (tea.Model, tea.Cmd) {
+	if err := config.Save(m.cfg, config.DefaultPath()); err != nil {
+		m.err = err
+	}
+	return m, nil
 }
 
 var sortNames = []string{"değer", "gün %", "gün ₺", "K/Z", "ad"}
