@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -20,7 +21,30 @@ const (
 
 var yahooHosts = []string{"query1.finance.yahoo.com", "query2.finance.yahoo.com"}
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+// httpClient prefers IPv4: on some networks the IPv6 path to a price API is
+// intercepted or broken (TLS fails with "server gave HTTP response to HTTPS
+// client"), while IPv4 works. IPv6 stays as a fallback for v6-only networks.
+var httpClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         dialPreferV4,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	},
+}
+
+func dialPreferV4(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	if network == "tcp" {
+		if c, err := d.DialContext(ctx, "tcp4", addr); err == nil {
+			return c, nil
+		}
+	}
+	return d.DialContext(ctx, network, addr)
+}
 
 type yahooResp struct {
 	Chart struct {
